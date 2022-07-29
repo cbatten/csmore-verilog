@@ -1,0 +1,276 @@
+#=========================================================================
+# Makefile for Modular Verilog Build System
+#=========================================================================
+# This is a simple start to a much more sophisticated Verilog build
+# system. For most projects, a developer will not need to make any
+# changes to this file except to make sure that the subprojs make
+# variable correctly lists the desired subprojects to include in this
+# project. Developers also need to make sure each subproject makefile
+# fragment (e.g., vc.mk) is uptodate with a list of all of the subproject
+# dependencies, Verilog source files, test source files, and simultor
+# source files. The key targets for this Makefile are as follows:
+#
+#  - default   : build all simulators
+#  - check     : build and run all unit tests
+#  - clean     : remove all generated content
+#
+
+#-------------------------------------------------------------------------
+# Basic setup
+#-------------------------------------------------------------------------
+
+# Remove all default implicit rules since they can cause subtle bugs
+# and they just make things run slower
+
+.SUFFIXES:
+% : %,v
+% : RCS/%,v
+% : RCS/%
+% : s.%
+% : SCCS/s.%
+
+# Delete a target if there is an error when we try to make the target
+
+.DELETE_ON_ERROR:
+
+# Default is to build the prereqs of the all target (defined at bottom)
+
+default : all
+.PHONY : default
+
+project_name := @PACKAGE_TARNAME@
+top_dir     = @srcdir@
+src_dir     = $(top_dir)
+scripts_dir = $(top_dir)/scripts
+
+# List of verilog files
+
+replit_srcs = \
+  Mux2.v \
+  Mux2_4b.v \
+  Adder_4b.v \
+  Reg_4b.v \
+  ProcDpath.v \
+  ProcCtrl.v \
+  Proc.v \
+
+srcs = \
+  $(replit_srcs) \
+  Mux2_gl.v \
+  Mux2_df.v \
+  Mux2_rtl.v \
+  Mux2_4b_struct.v \
+  Mux2_4b_rtl.v \
+  HA_gl.v \
+  HA_df.v \
+  HA_rtl.v \
+  FA_struct.v \
+  FA_rtl.v \
+  Adder_4b_struct.v \
+  Adder_4b_rtl.v \
+  SRLatch.v \
+  DLatch.v \
+  DFFSimple_struct.v \
+  DFFSimple_rtl.v \
+  DFF.v \
+
+test_srcs = \
+  Mux2.t.v \
+  Mux2_gl.t.v \
+  Mux2_df.t.v \
+  Mux2_rtl.t.v \
+  Mux2_4b_struct.t.v \
+  Mux2_4b_rtl.t.v \
+  HA_gl.t.v \
+  HA_df.t.v \
+  HA_rtl.t.v \
+  FA_struct.t.v \
+  FA_rtl.t.v \
+  Adder_4b_struct.t.v \
+  Adder_4b_rtl.t.v \
+  Adder_4b.t.v \
+  SRLatch.t.v \
+  DLatch.t.v \
+  DFFSimple_struct.t.v \
+  DFFSimple_rtl.t.v \
+  DFF.t.v \
+  Reg_4b.t.v \
+  Proc.t.v \
+
+testbench_srcs = \
+  Mux2-testbench.v \
+  Mux2_4b-testbench.v \
+  Adder_4b-testbench.v \
+  Reg_4b-testbench.v \
+  Proc-testbench.v \
+
+#-------------------------------------------------------------------------
+# Programs
+#-------------------------------------------------------------------------
+
+VMKDEPS     = $(scripts_dir)/mk-verilog-deps
+
+VCOMP       = @vcomp@
+VCOMP_FLAGS = @vcomp_flags@
+
+VPP         = @vpp@
+VPP_FLAGS   = @vpp_flags@
+
+#-------------------------------------------------------------------------
+# Template for per subproject rules
+#-------------------------------------------------------------------------
+
+VPATH := $(src_dir)
+
+# Create dependency files for unit tests
+
+test_deps := $(patsubst %.t.v,%.t.d,$(test_srcs))
+
+$(test_deps) : %.t.d : %.t.v
+	$(VMKDEPS) -I $(src_dir) $*-test $<
+
+deps += $(test_deps)
+junk += $(test_deps)
+
+# Build unit tests
+
+test_exes := $(patsubst %.t.v,%-test,$(test_srcs))
+
+$(test_exes) : %-test : %.t.v
+	$(scripts_dir)/warnings2errors \
+    $(VCOMP) $(VCOMP_FLAGS) -o $@ -I $(src_dir) $<
+
+junk += $(test_exes)
+
+# Run unit tests
+
+test_outs := $(addsuffix .out, $(test_exes))
+
+$(test_outs) : %.out : %
+	./$< +verbose=2 > $@
+
+junk += \
+  $(test_outs) \
+  $(patsubst %.out,%.vcd,$(test_outs))
+
+# Unit test summary
+
+test-summary.out : $(test_outs)
+	if [[ "x$(test_outs)" == "x" ]]; then \
+    touch test-summary.out; \
+  else \
+    cat $(test_outs) > test-summary.out; \
+  fi
+
+junk += test-summary.out
+
+# Create dependency files for unit tests
+
+testbench_deps := $(patsubst %.v,%.d,$(testbench_srcs))
+
+$(testbench_deps) : %.d : %.v
+	$(VMKDEPS) -I $(src_dir) $*-testbench $<
+
+deps += $(testbench_deps)
+junk += $(testbench_deps)
+
+# Build testbenches
+
+testbench_exes := $(patsubst %.v,%,$(testbench_srcs))
+
+$(testbench_exes) : % : %.v
+	$(scripts_dir)/warnings2errors \
+    $(VCOMP) $(VCOMP_FLAGS) -o $@ -I $(src_dir) $<
+
+junk += $(testbench_exes)
+
+# Run testbenches
+
+testbench_outs := $(addsuffix .out, $(testbench_exes))
+
+$(testbench_outs) : %.out : %
+	./$< +verbose=2 > $@
+
+junk += $(testbench_outs) dump.vcd
+
+#-------------------------------------------------------------------------
+# Autodependency files
+#-------------------------------------------------------------------------
+
+-include $(deps)
+
+deps : $(deps)
+.PHONY : deps
+
+#-------------------------------------------------------------------------
+# Check
+#-------------------------------------------------------------------------
+
+check : $(testbench_outs) test-summary.out
+	grep --color ERROR $(testbench_outs) || true
+	$(scripts_dir)/test-summary --verbose test-summary.out
+
+.PHONY : check
+
+#-------------------------------------------------------------------------
+# replit
+#-------------------------------------------------------------------------
+
+replit : $(replit_srcs) $(testbench_srcs)
+	rm -rf replit
+	mkdir -p replit
+	cp $^ replit
+
+junk += replit
+
+.PHONY : replit
+
+#-------------------------------------------------------------------------
+# Regenerate configure information
+#-------------------------------------------------------------------------
+
+configure_prereq = \
+  $(top_dir)/configure.ac \
+  $(top_dir)/aclocal.m4 \
+
+$(top_dir)/configure : $(configure_prereq)
+	cd $(top_dir) && autoconf
+
+config.status : $(top_dir)/configure
+	./config.status --recheck
+
+makefile_prereq = \
+  config.status \
+  $(top_dir)/Makefile.in \
+
+Makefile : $(makefile_prereq)
+	./config.status
+
+dist_junk += \
+  config.status Makefile config.log \
+
+#-------------------------------------------------------------------------
+# Default
+#-------------------------------------------------------------------------
+
+all : $(exes)
+.PHONY : all
+
+#-------------------------------------------------------------------------
+# Makefile debugging
+#-------------------------------------------------------------------------
+# This handy rule will display the contents of any make variable by using
+# the target echo-<varname>. So for example, make echo-junk will display
+# the contents of the junk variable.
+
+echo-% :
+	@echo $* = $($*)
+
+#-------------------------------------------------------------------------
+# Clean up junk
+#-------------------------------------------------------------------------
+
+clean :
+	rm -rf *~ \#* *.v *.vcd *.stats a.out *-pygen-hack $(junk)
+
+.PHONY : clean
